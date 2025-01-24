@@ -38,7 +38,7 @@ exports.signin = async (req,res) =>{
             sameSite:"none",
             secure:true
         });
-        res.status(201).json({msg:`User signed in successfully ! `});
+        res.status(201).json({msg:`User signed in successfully ! Hello ${result?.userName}`});
     }catch(err){
         res.status(400).json({msg:"Error in sign in",err:err.msg});
     }
