@@ -1,6 +1,9 @@
 const User = require("../models/user-model");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const {populate} = require("dotenv");
+const formidable = require("formidable");
+const cloudinary = require("../config/cloudinary");
 
 exports.signin = async (req,res) =>{
     try{
@@ -75,4 +78,145 @@ exports.login = async (req,res)=>{
     }catch(err){
         res.status(400).json({msg:'Error in login !',err:err.message});
     }
+}
+
+exports.userDetails = async (req,res) =>{
+    try{
+        const {id} = req.params;
+        if(!id){
+            return res.status(400).json({msg:'id is required'});
+        }
+        const user = await User.findById(id).select('-password')
+            .populate("followers")
+            .populate({
+                path: "threads",
+                populate:[{path:"likes"},{path: "comments"},{path:'admin'}]})
+            .populate({path:'replies',populate:{path:"admin"}})
+            .populate({path:'reposts',populate:[{path:"likes"},{path: "comments"},{path:"admin"}]})
+        res.status(200).json({msg:'User Details fetched',user});
+    }catch(err){
+    res.status(400).json({msg:'Error in user Details !',err:err.message});
+}
+}
+
+exports.followUser = async (req,res) =>{
+    try{
+        const {id} = req.params;
+        if(!id){
+            return res.status(400).json({msg:"Id is required!"});
+        }
+        const userExists = await User.findById(id);
+        if(!userExists){
+            return res.status(400).json({msg:"User don't exists"});
+        }
+        if(userExists.followers.includes(req.user._id)) {
+            await User.findByIdAndUpdate(userExists._id, {
+                $pull: {followers: req.user._id},
+            }, {new: true});
+            return res.status(201).json({msg: `Unfollowed ${userExists.userName}`});
+        }
+        await User.findByIdAndUpdate(userExists._id, {
+            $push: {followers: req.user._id},
+        }, {new: true});
+        return res.status(201).json({msg: `Following ${userExists.userName}`});
+
+    }catch (err){
+        res.status(400).json({msg:"Error in follow user",err:err.msg});
+    }
+}
+
+exports.updateProfile = async (req, res) => {
+    try {
+        const userExists = await User.findById(req.user._id);
+        if (!userExists) {
+            return res.status(400).json({ msg: "Error in fetching user" });
+        }
+
+        const form = formidable({});
+
+        form.parse(req, async (err, fields, files) => {
+            if (err) {
+                return res.status(400).json({ msg: "Error in formidable", error: err.message });
+            }
+            // console.log({files,fields});
+            try {
+                // Update text field (bio)
+                if (fields.text) {
+                    await User.findByIdAndUpdate(req.user._id, { bio: fields.text }, { new: true });
+                }
+
+                // If profile picture is uploaded
+                if (files.media) {
+                    // If user has an existing profile pic, delete it
+                    if (userExists.public_id) {
+                        await cloudinary.uploader.destroy(userExists.public_id,(error,result)=>{
+                            console.log({error,result});
+                        });
+                    }
+
+                    // Upload new image
+                    const uploadedImage = await cloudinary.uploader.upload(files.media.filepath, {
+                        folder: 'Threads_clone/Profiles'
+                    });
+
+                    if (!uploadedImage) {
+                        return res.status(400).json({ msg: "Error in uploading image" });
+                    }
+
+                    // Update User with new profile pic
+                    await User.findByIdAndUpdate(req.user._id, {
+                        profilePic: uploadedImage.secure_url,
+                        public_id: uploadedImage.public_id
+                    }, { new: true });
+                }
+                console.log(files);
+                // Send final response **inside** the callback after all async operations are completed
+                return res.status(201).json({ msg: "Updated profile successfully" });
+
+            } catch (error) {
+                return res.status(400).json({ msg: "Error in updating profile", error: error.message });
+            }
+        });
+
+    } catch (err) {
+        return res.status(400).json({ msg: "Error in updating profile", error: err.message });
+    }
+};
+
+exports.searchUser = async (req,res)=>{
+    try{
+        const {query} = req.params;
+        const users = await User.find({
+            $or:[
+                {userName: {$regex:query,$options:"i"}},
+                {email: {$regex:query,$options:"i"}},
+            ]
+        });
+        res.status(200).json({msg:"searched",users});
+    }catch(err){
+        res.status(400).json({msg:'Error in Searching User !',err:err.message});
+    }
+}
+
+exports.logout = async (req,res) =>{
+    try{
+        res.cookie('token',"",{
+            maxAge:Date.now(),
+            httpOnly:true,
+            sameSite:"none",
+            secure:true,
+        });
+    res.status(201).json({msg:"You logged out"});
+    }catch(err){
+        res.status(400).json({msg:'Error in Log out !',err:err.message});
+    }
+}
+
+exports.myInfo = async (req,res)=>{
+   try{
+       res.status(200).json({me:req.user});
+
+   }catch(err){
+       res.status(400).json({msg:'Error in my Info!',err:err.message});
+   }
 }
